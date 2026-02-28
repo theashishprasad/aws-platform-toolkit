@@ -12,54 +12,53 @@ Usage:
 """
 
 import json
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
 
 import boto3
 import typer
 from botocore.exceptions import BotoCoreError, ClientError
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich import box
 
-app  = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 
 # ── Data models ───────────────────────────────────────────────────────────────
 
+
 class HealthStatus(str, Enum):
-    HEALTHY   = "HEALTHY"
-    DEGRADED  = "DEGRADED"
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
     UNHEALTHY = "UNHEALTHY"
-    UNKNOWN   = "UNKNOWN"
+    UNKNOWN = "UNKNOWN"
 
 
 @dataclass
 class ServiceHealth:
-    service:    str
-    resource:   str
-    status:     HealthStatus
-    message:    str
-    region:     str
+    service: str
+    resource: str
+    status: HealthStatus
+    message: str
+    region: str
     checked_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    details:    dict = field(default_factory=dict)
+    details: dict = field(default_factory=dict)
 
 
 @dataclass
 class HealthReport:
-    total:     int
-    healthy:   int
-    degraded:  int
+    total: int
+    healthy: int
+    degraded: int
     unhealthy: int
-    unknown:   int
+    unknown: int
     duration_seconds: float
-    checks:    List[ServiceHealth]
+    checks: list[ServiceHealth]
 
     @property
     def overall_status(self) -> HealthStatus:
@@ -74,7 +73,8 @@ class HealthReport:
 
 # ── EKS health check ──────────────────────────────────────────────────────────
 
-def check_eks(region: str) -> List[ServiceHealth]:
+
+def check_eks(region: str) -> list[ServiceHealth]:
     """Check all EKS clusters: active status + node group health."""
     results = []
     try:
@@ -82,12 +82,15 @@ def check_eks(region: str) -> List[ServiceHealth]:
         clusters = eks.list_clusters().get("clusters", [])
 
         if not clusters:
-            return [ServiceHealth(
-                service="EKS", resource="(no clusters found)",
-                status=HealthStatus.UNKNOWN,
-                message="No EKS clusters found in this region.",
-                region=region,
-            )]
+            return [
+                ServiceHealth(
+                    service="EKS",
+                    resource="(no clusters found)",
+                    status=HealthStatus.UNKNOWN,
+                    message="No EKS clusters found in this region.",
+                    region=region,
+                )
+            ]
 
         for cluster_name in clusters:
             try:
@@ -96,14 +99,15 @@ def check_eks(region: str) -> List[ServiceHealth]:
 
                 if cluster_status == "ACTIVE":
                     # Check node groups
-                    node_groups = eks.list_nodegroups(clusterName=cluster_name).get("nodegroups", [])
+                    node_groups = eks.list_nodegroups(clusterName=cluster_name).get(
+                        "nodegroups", []
+                    )
                     unhealthy_ng = []
-                    degraded_ng  = []
+                    degraded_ng = []
 
                     for ng_name in node_groups:
                         ng = eks.describe_nodegroup(
-                            clusterName=cluster_name,
-                            nodegroupName=ng_name
+                            clusterName=cluster_name, nodegroupName=ng_name
                         )["nodegroup"]
                         ng_status = ng.get("status", "UNKNOWN")
                         if ng_status not in ("ACTIVE",):
@@ -113,58 +117,73 @@ def check_eks(region: str) -> List[ServiceHealth]:
                                 unhealthy_ng.append(ng_name)
 
                     if unhealthy_ng:
-                        status  = HealthStatus.UNHEALTHY
+                        status = HealthStatus.UNHEALTHY
                         message = f"Node groups unhealthy: {', '.join(unhealthy_ng)}"
                     elif degraded_ng:
-                        status  = HealthStatus.DEGRADED
+                        status = HealthStatus.DEGRADED
                         message = f"Node groups degraded: {', '.join(degraded_ng)}"
                     else:
-                        status  = HealthStatus.HEALTHY
+                        status = HealthStatus.HEALTHY
                         message = f"Cluster ACTIVE · {len(node_groups)} node group(s) healthy"
 
-                    results.append(ServiceHealth(
-                        service="EKS", resource=cluster_name,
-                        status=status, message=message, region=region,
-                        details={
-                            "kubernetes_version": cluster.get("version"),
-                            "node_groups": node_groups,
-                            "unhealthy_node_groups": unhealthy_ng,
-                        }
-                    ))
+                    results.append(
+                        ServiceHealth(
+                            service="EKS",
+                            resource=cluster_name,
+                            status=status,
+                            message=message,
+                            region=region,
+                            details={
+                                "kubernetes_version": cluster.get("version"),
+                                "node_groups": node_groups,
+                                "unhealthy_node_groups": unhealthy_ng,
+                            },
+                        )
+                    )
                 else:
-                    results.append(ServiceHealth(
-                        service="EKS", resource=cluster_name,
-                        status=HealthStatus.UNHEALTHY,
-                        message=f"Cluster status is {cluster_status}",
-                        region=region,
-                    ))
+                    results.append(
+                        ServiceHealth(
+                            service="EKS",
+                            resource=cluster_name,
+                            status=HealthStatus.UNHEALTHY,
+                            message=f"Cluster status is {cluster_status}",
+                            region=region,
+                        )
+                    )
 
             except ClientError as e:
-                results.append(ServiceHealth(
-                    service="EKS", resource=cluster_name,
-                    status=HealthStatus.UNKNOWN,
-                    message=f"API error: {e.response['Error']['Message']}",
-                    region=region,
-                ))
+                results.append(
+                    ServiceHealth(
+                        service="EKS",
+                        resource=cluster_name,
+                        status=HealthStatus.UNKNOWN,
+                        message=f"API error: {e.response['Error']['Message']}",
+                        region=region,
+                    )
+                )
 
     except (BotoCoreError, ClientError) as e:
-        results.append(ServiceHealth(
-            service="EKS", resource="*",
-            status=HealthStatus.UNKNOWN,
-            message=f"Failed to list clusters: {e}",
-            region=region,
-        ))
+        results.append(
+            ServiceHealth(
+                service="EKS",
+                resource="*",
+                status=HealthStatus.UNKNOWN,
+                message=f"Failed to list clusters: {e}",
+                region=region,
+            )
+        )
 
     return results
 
 
 # ── RDS health check ──────────────────────────────────────────────────────────
 
-def check_rds(region: str) -> List[ServiceHealth]:
+
+def check_rds(region: str) -> list[ServiceHealth]:
     """Check all RDS instances: availability status + connection acceptability."""
     results = []
-    HEALTHY_STATUSES = {"available", "backing-up"}
-    DEGRADED_STATUSES = {"storage-full", "incompatible-parameters", "maintenance"}
+    healthy_statuses = {"available", "backing-up"}
+    degraded_statuses = {"storage-full", "incompatible-parameters", "maintenance"}
 
     try:
         rds = boto3.client("rds", region_name=region)
@@ -175,58 +194,68 @@ def check_rds(region: str) -> List[ServiceHealth]:
             instances.extend(page.get("DBInstances", []))
 
         if not instances:
-            return [ServiceHealth(
-                service="RDS", resource="(no instances found)",
-                status=HealthStatus.UNKNOWN,
-                message="No RDS instances found in this region.",
-                region=region,
-            )]
+            return [
+                ServiceHealth(
+                    service="RDS",
+                    resource="(no instances found)",
+                    status=HealthStatus.UNKNOWN,
+                    message="No RDS instances found in this region.",
+                    region=region,
+                )
+            ]
 
         for db in instances:
-            db_id     = db["DBInstanceIdentifier"]
+            db_id = db["DBInstanceIdentifier"]
             db_status = db.get("DBInstanceStatus", "unknown").lower()
-            multi_az  = db.get("MultiAZ", False)
-            engine    = db.get("Engine", "unknown")
+            multi_az = db.get("MultiAZ", False)
+            engine = db.get("Engine", "unknown")
 
-            if db_status in HEALTHY_STATUSES:
-                status  = HealthStatus.HEALTHY
-                message = (
-                    f"Status: {db_status} · Multi-AZ: {multi_az} · Engine: {engine}"
-                )
-            elif db_status in DEGRADED_STATUSES:
-                status  = HealthStatus.DEGRADED
+            if db_status in healthy_statuses:
+                status = HealthStatus.HEALTHY
+                message = f"Status: {db_status} · Multi-AZ: {multi_az} · Engine: {engine}"
+            elif db_status in degraded_statuses:
+                status = HealthStatus.DEGRADED
                 message = f"Status: {db_status} — attention required"
             else:
-                status  = HealthStatus.UNHEALTHY
+                status = HealthStatus.UNHEALTHY
                 message = f"Status: {db_status}"
 
-            results.append(ServiceHealth(
-                service="RDS", resource=db_id,
-                status=status, message=message, region=region,
-                details={
-                    "engine":          engine,
-                    "engine_version":  db.get("EngineVersion"),
-                    "instance_class":  db.get("DBInstanceClass"),
-                    "multi_az":        multi_az,
-                    "storage_type":    db.get("StorageType"),
-                    "allocated_storage_gb": db.get("AllocatedStorage"),
-                }
-            ))
+            results.append(
+                ServiceHealth(
+                    service="RDS",
+                    resource=db_id,
+                    status=status,
+                    message=message,
+                    region=region,
+                    details={
+                        "engine": engine,
+                        "engine_version": db.get("EngineVersion"),
+                        "instance_class": db.get("DBInstanceClass"),
+                        "multi_az": multi_az,
+                        "storage_type": db.get("StorageType"),
+                        "allocated_storage_gb": db.get("AllocatedStorage"),
+                    },
+                )
+            )
 
     except (BotoCoreError, ClientError) as e:
-        results.append(ServiceHealth(
-            service="RDS", resource="*",
-            status=HealthStatus.UNKNOWN,
-            message=f"Failed to describe instances: {e}",
-            region=region,
-        ))
+        results.append(
+            ServiceHealth(
+                service="RDS",
+                resource="*",
+                status=HealthStatus.UNKNOWN,
+                message=f"Failed to describe instances: {e}",
+                region=region,
+            )
+        )
 
     return results
 
 
 # ── ElastiCache health check ──────────────────────────────────────────────────
 
-def check_elasticache(region: str) -> List[ServiceHealth]:
+
+def check_elasticache(region: str) -> list[ServiceHealth]:
     """Check ElastiCache clusters: available status + node health."""
     results = []
 
@@ -237,7 +266,7 @@ def check_elasticache(region: str) -> List[ServiceHealth]:
         try:
             rgs = ec.describe_replication_groups().get("ReplicationGroups", [])
             for rg in rgs:
-                rg_id     = rg["ReplicationGroupId"]
+                rg_id = rg["ReplicationGroupId"]
                 rg_status = rg.get("Status", "unknown").lower()
 
                 if rg_status == "available":
@@ -252,24 +281,29 @@ def check_elasticache(region: str) -> List[ServiceHealth]:
                     ]
 
                     if unhealthy_nodes:
-                        status  = HealthStatus.DEGRADED
+                        status = HealthStatus.DEGRADED
                         message = f"Unhealthy nodes: {', '.join(unhealthy_nodes)}"
                     else:
-                        status  = HealthStatus.HEALTHY
+                        status = HealthStatus.HEALTHY
                         message = f"Replication group available · {len(node_groups)} shard(s)"
                 else:
-                    status  = HealthStatus.UNHEALTHY
+                    status = HealthStatus.UNHEALTHY
                     message = f"Replication group status: {rg_status}"
 
-                results.append(ServiceHealth(
-                    service="ElastiCache", resource=rg_id,
-                    status=status, message=message, region=region,
-                    details={
-                        "cluster_mode": rg.get("ClusterEnabled", False),
-                        "node_groups":  len(rg.get("NodeGroups", [])),
-                        "description":  rg.get("Description", ""),
-                    }
-                ))
+                results.append(
+                    ServiceHealth(
+                        service="ElastiCache",
+                        resource=rg_id,
+                        status=status,
+                        message=message,
+                        region=region,
+                        details={
+                            "cluster_mode": rg.get("ClusterEnabled", False),
+                            "node_groups": len(rg.get("NodeGroups", [])),
+                            "description": rg.get("Description", ""),
+                        },
+                    )
+                )
         except ClientError:
             pass  # No replication groups
 
@@ -277,7 +311,7 @@ def check_elasticache(region: str) -> List[ServiceHealth]:
         clusters = ec.describe_cache_clusters(ShowCacheNodeInfo=True).get("CacheClusters", [])
         for cluster in clusters:
             if cluster.get("Engine") == "memcached":
-                cluster_id     = cluster["CacheClusterId"]
+                cluster_id = cluster["CacheClusterId"]
                 cluster_status = cluster.get("CacheClusterStatus", "unknown").lower()
 
                 if cluster_status == "available":
@@ -286,43 +320,57 @@ def check_elasticache(region: str) -> List[ServiceHealth]:
                         for n in cluster.get("CacheNodes", [])
                         if n.get("CacheNodeStatus") != "available"
                     ]
-                    status  = HealthStatus.DEGRADED if unhealthy else HealthStatus.HEALTHY
+                    status = HealthStatus.DEGRADED if unhealthy else HealthStatus.HEALTHY
                     message = (
                         f"Nodes unhealthy: {', '.join(unhealthy)}"
                         if unhealthy
                         else f"Cluster available · {cluster.get('NumCacheNodes', 0)} node(s)"
                     )
                 else:
-                    status  = HealthStatus.UNHEALTHY
+                    status = HealthStatus.UNHEALTHY
                     message = f"Cluster status: {cluster_status}"
 
-                results.append(ServiceHealth(
-                    service="ElastiCache", resource=cluster_id,
-                    status=status, message=message, region=region,
-                ))
+                results.append(
+                    ServiceHealth(
+                        service="ElastiCache",
+                        resource=cluster_id,
+                        status=status,
+                        message=message,
+                        region=region,
+                    )
+                )
 
         if not results:
-            results.append(ServiceHealth(
-                service="ElastiCache", resource="(no clusters found)",
-                status=HealthStatus.UNKNOWN,
-                message="No ElastiCache clusters found in this region.",
-                region=region,
-            ))
+            results.append(
+                ServiceHealth(
+                    service="ElastiCache",
+                    resource="(no clusters found)",
+                    status=HealthStatus.UNKNOWN,
+                    message="No ElastiCache clusters found in this region.",
+                    region=region,
+                )
+            )
 
     except (BotoCoreError, ClientError) as e:
-        results.append(ServiceHealth(
-            service="ElastiCache", resource="*",
-            status=HealthStatus.UNKNOWN,
-            message=f"Failed to describe clusters: {e}",
-            region=region,
-        ))
+        results.append(
+            ServiceHealth(
+                service="ElastiCache",
+                resource="*",
+                status=HealthStatus.UNKNOWN,
+                message=f"Failed to describe clusters: {e}",
+                region=region,
+            )
+        )
 
     return results
 
 
 # ── SQS health check ──────────────────────────────────────────────────────────
 
-def check_sqs(region: str, depth_threshold: int = 1000, dlq_threshold: int = 1) -> List[ServiceHealth]:
+
+def check_sqs(
+    region: str, depth_threshold: int = 1000, dlq_threshold: int = 1
+) -> list[ServiceHealth]:
     """
     Check SQS queues: message depth, DLQ backlog, oldest message age.
     Flags queues where ApproximateNumberOfMessages > depth_threshold
@@ -335,12 +383,15 @@ def check_sqs(region: str, depth_threshold: int = 1000, dlq_threshold: int = 1) 
         queues = sqs.list_queues().get("QueueUrls", [])
 
         if not queues:
-            return [ServiceHealth(
-                service="SQS", resource="(no queues found)",
-                status=HealthStatus.UNKNOWN,
-                message="No SQS queues found in this region.",
-                region=region,
-            )]
+            return [
+                ServiceHealth(
+                    service="SQS",
+                    resource="(no queues found)",
+                    status=HealthStatus.UNKNOWN,
+                    message="No SQS queues found in this region.",
+                    region=region,
+                )
+            ]
 
         attrs_to_fetch = [
             "ApproximateNumberOfMessages",
@@ -354,14 +405,13 @@ def check_sqs(region: str, depth_threshold: int = 1000, dlq_threshold: int = 1) 
             queue_name = queue_url.split("/")[-1]
             try:
                 attrs = sqs.get_queue_attributes(
-                    QueueUrl=queue_url,
-                    AttributeNames=attrs_to_fetch
+                    QueueUrl=queue_url, AttributeNames=attrs_to_fetch
                 ).get("Attributes", {})
 
-                visible    = int(attrs.get("ApproximateNumberOfMessages", 0))
-                in_flight  = int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
-                delayed    = int(attrs.get("ApproximateNumberOfMessagesDelayed", 0))
-                is_dlq     = queue_name.endswith(("-dlq", "-DLQ", "_dlq", "_DLQ", ".fifo"))
+                visible = int(attrs.get("ApproximateNumberOfMessages", 0))
+                in_flight = int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
+                delayed = int(attrs.get("ApproximateNumberOfMessagesDelayed", 0))
+                is_dlq = queue_name.endswith(("-dlq", "-DLQ", "_dlq", "_DLQ", ".fifo"))
                 has_redrive = "RedrivePolicy" in attrs
 
                 issues = []
@@ -371,41 +421,52 @@ def check_sqs(region: str, depth_threshold: int = 1000, dlq_threshold: int = 1) 
                     issues.append(f"DLQ has {visible} message(s) — investigate immediately")
 
                 if issues:
-                    status  = HealthStatus.UNHEALTHY if is_dlq else HealthStatus.DEGRADED
+                    status = HealthStatus.UNHEALTHY if is_dlq else HealthStatus.DEGRADED
                     message = "; ".join(issues)
                 else:
-                    status  = HealthStatus.HEALTHY
+                    status = HealthStatus.HEALTHY
                     message = (
                         f"Depth: {visible} visible · {in_flight} in-flight · {delayed} delayed"
                     )
 
-                results.append(ServiceHealth(
-                    service="SQS", resource=queue_name,
-                    status=status, message=message, region=region,
-                    details={
-                        "visible":   visible,
-                        "in_flight": in_flight,
-                        "delayed":   delayed,
-                        "is_dlq":    is_dlq,
-                        "has_redrive_policy": has_redrive,
-                    }
-                ))
+                results.append(
+                    ServiceHealth(
+                        service="SQS",
+                        resource=queue_name,
+                        status=status,
+                        message=message,
+                        region=region,
+                        details={
+                            "visible": visible,
+                            "in_flight": in_flight,
+                            "delayed": delayed,
+                            "is_dlq": is_dlq,
+                            "has_redrive_policy": has_redrive,
+                        },
+                    )
+                )
 
             except ClientError as e:
-                results.append(ServiceHealth(
-                    service="SQS", resource=queue_name,
-                    status=HealthStatus.UNKNOWN,
-                    message=f"API error: {e.response['Error']['Message']}",
-                    region=region,
-                ))
+                results.append(
+                    ServiceHealth(
+                        service="SQS",
+                        resource=queue_name,
+                        status=HealthStatus.UNKNOWN,
+                        message=f"API error: {e.response['Error']['Message']}",
+                        region=region,
+                    )
+                )
 
     except (BotoCoreError, ClientError) as e:
-        results.append(ServiceHealth(
-            service="SQS", resource="*",
-            status=HealthStatus.UNKNOWN,
-            message=f"Failed to list queues: {e}",
-            region=region,
-        ))
+        results.append(
+            ServiceHealth(
+                service="SQS",
+                resource="*",
+                status=HealthStatus.UNKNOWN,
+                message=f"Failed to list queues: {e}",
+                region=region,
+            )
+        )
 
     return results
 
@@ -413,16 +474,16 @@ def check_sqs(region: str, depth_threshold: int = 1000, dlq_threshold: int = 1) 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 SERVICE_CHECKERS = {
-    "eks":         check_eks,
-    "rds":         check_rds,
+    "eks": check_eks,
+    "rds": check_rds,
     "elasticache": check_elasticache,
-    "sqs":         check_sqs,
+    "sqs": check_sqs,
 }
 
 
-def run_checks(services: List[str], region: str, **kwargs) -> HealthReport:
+def run_checks(services: list[str], region: str, **kwargs) -> HealthReport:
     """Run all requested service checks concurrently using ThreadPoolExecutor."""
-    all_results: List[ServiceHealth] = []
+    all_results: list[ServiceHealth] = []
     start = time.monotonic()
 
     with ThreadPoolExecutor(max_workers=max(1, len(services))) as executor:
@@ -436,12 +497,15 @@ def run_checks(services: List[str], region: str, **kwargs) -> HealthReport:
             try:
                 all_results.extend(future.result())
             except Exception as exc:
-                all_results.append(ServiceHealth(
-                    service=svc.upper(), resource="*",
-                    status=HealthStatus.UNKNOWN,
-                    message=f"Unexpected error during check: {exc}",
-                    region=region,
-                ))
+                all_results.append(
+                    ServiceHealth(
+                        service=svc.upper(),
+                        resource="*",
+                        status=HealthStatus.UNKNOWN,
+                        message=f"Unexpected error during check: {exc}",
+                        region=region,
+                    )
+                )
 
     duration = time.monotonic() - start
 
@@ -459,27 +523,27 @@ def run_checks(services: List[str], region: str, **kwargs) -> HealthReport:
 # ── Output formatters ─────────────────────────────────────────────────────────
 
 STATUS_COLOURS = {
-    HealthStatus.HEALTHY:   "green",
-    HealthStatus.DEGRADED:  "yellow",
+    HealthStatus.HEALTHY: "green",
+    HealthStatus.DEGRADED: "yellow",
     HealthStatus.UNHEALTHY: "red",
-    HealthStatus.UNKNOWN:   "dim",
+    HealthStatus.UNKNOWN: "dim",
 }
 
 STATUS_ICONS = {
-    HealthStatus.HEALTHY:   "✅",
-    HealthStatus.DEGRADED:  "⚠️ ",
+    HealthStatus.HEALTHY: "✅",
+    HealthStatus.DEGRADED: "⚠️ ",
     HealthStatus.UNHEALTHY: "❌",
-    HealthStatus.UNKNOWN:   "❓",
+    HealthStatus.UNKNOWN: "❓",
 }
 
 
 def print_table(report: HealthReport) -> None:
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold blue")
-    table.add_column("Status",   width=10)
-    table.add_column("Service",  width=14)
+    table.add_column("Status", width=10)
+    table.add_column("Service", width=14)
     table.add_column("Resource", width=32)
-    table.add_column("Message",  width=55)
-    table.add_column("Region",   width=14)
+    table.add_column("Message", width=55)
+    table.add_column("Region", width=14)
 
     for check in report.checks:
         colour = STATUS_COLOURS[check.status]
@@ -504,21 +568,25 @@ def print_table(report: HealthReport) -> None:
 
 # ── CLI commands ──────────────────────────────────────────────────────────────
 
+
 @app.command("run")
 def run(
     services: str = typer.Option(
         "eks,rds,elasticache,sqs",
-        "--services", "-s",
+        "--services",
+        "-s",
         help="Comma-separated list of services to check: eks, rds, elasticache, sqs",
     ),
     region: str = typer.Option(
         "us-east-1",
-        "--region", "-r",
+        "--region",
+        "-r",
         help="AWS region to check",
     ),
     output: str = typer.Option(
         "table",
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Output format: table | json",
     ),
     fail_on_unhealthy: bool = typer.Option(
@@ -543,21 +611,23 @@ def run(
         console.print(f"Valid options: {', '.join(SERVICE_CHECKERS.keys())}")
         raise typer.Exit(1)
 
-    console.print(f"\n[bold blue]🔍 Running health checks[/bold blue] — "
-                  f"services: [cyan]{', '.join(service_list)}[/cyan] · "
-                  f"region: [cyan]{region}[/cyan]\n")
+    console.print(
+        f"\n[bold blue]🔍 Running health checks[/bold blue] — "
+        f"services: [cyan]{', '.join(service_list)}[/cyan] · "
+        f"region: [cyan]{region}[/cyan]\n"
+    )
 
     report = run_checks(service_list, region)
 
     if output == "json":
         output_data = {
-            "overall_status":    report.overall_status.value,
+            "overall_status": report.overall_status.value,
             "summary": {
-                "total":    report.total,
-                "healthy":  report.healthy,
+                "total": report.total,
+                "healthy": report.healthy,
                 "degraded": report.degraded,
-                "unhealthy":report.unhealthy,
-                "unknown":  report.unknown,
+                "unhealthy": report.unhealthy,
+                "unknown": report.unknown,
             },
             "duration_seconds": report.duration_seconds,
             "checks": [asdict(c) for c in report.checks],
@@ -575,10 +645,10 @@ def list_services():
     """List all supported services for health checks."""
     console.print("\n[bold]Supported services:[/bold]")
     descriptions = {
-        "eks":         "EKS cluster status + node group health",
-        "rds":         "RDS instance availability + status",
+        "eks": "EKS cluster status + node group health",
+        "rds": "RDS instance availability + status",
         "elasticache": "ElastiCache cluster + replication group health",
-        "sqs":         "SQS queue depth + DLQ backlog monitoring",
+        "sqs": "SQS queue depth + DLQ backlog monitoring",
     }
     for svc, desc in descriptions.items():
         console.print(f"  [cyan]{svc:<14}[/cyan] {desc}")

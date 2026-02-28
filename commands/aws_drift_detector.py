@@ -14,57 +14,56 @@ Usage:
 import json
 import re
 import tempfile
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import boto3
 import typer
 from botocore.exceptions import ClientError
 from rich.console import Console
-from rich.table import Table
-from rich import box
 
-app     = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 
 # ── Data models ───────────────────────────────────────────────────────────────
 
+
 class DriftType(str, Enum):
-    MODIFIED = "MODIFIED"   # Resource exists but attribute changed
-    MISSING  = "MISSING"    # Resource in state but not in AWS
-    UNKNOWN  = "UNKNOWN"    # Could not fetch live state
+    MODIFIED = "MODIFIED"  # Resource exists but attribute changed
+    MISSING = "MISSING"  # Resource in state but not in AWS
+    UNKNOWN = "UNKNOWN"  # Could not fetch live state
 
 
 @dataclass
 class AttributeDiff:
-    attribute:    str
-    state_value:  Any
-    live_value:   Any
+    attribute: str
+    state_value: Any
+    live_value: Any
 
 
 @dataclass
 class ResourceDrift:
-    resource_type:    str
-    resource_id:      str
+    resource_type: str
+    resource_id: str
     terraform_address: str
-    drift_type:       DriftType
-    diffs:            List[AttributeDiff] = field(default_factory=list)
-    message:          str = ""
+    drift_type: DriftType
+    diffs: list[AttributeDiff] = field(default_factory=list)
+    message: str = ""
 
 
 @dataclass
 class DriftReport:
-    tfstate_source:  str
-    checked_at:      str
+    tfstate_source: str
+    checked_at: str
     total_resources: int
-    drifted:         int
-    missing:         int
-    clean:           int
-    drifts:          List[ResourceDrift]
+    drifted: int
+    missing: int
+    clean: int
+    drifts: list[ResourceDrift]
 
     @property
     def has_drift(self) -> bool:
@@ -73,22 +72,23 @@ class DriftReport:
 
 # ── Terraform state parser ────────────────────────────────────────────────────
 
-def load_tfstate(source: str) -> Dict:
+
+def load_tfstate(source: str) -> dict:
     """Load Terraform state from local path or S3 URI."""
     if source.startswith("s3://"):
         return _load_from_s3(source)
     return _load_from_file(source)
 
 
-def _load_from_file(path: str) -> Dict:
+def _load_from_file(path: str) -> dict:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Terraform state file not found: {path}")
-    with open(p) as f:
+    with p.open() as f:
         return json.load(f)
 
 
-def _load_from_s3(uri: str) -> Dict:
+def _load_from_s3(uri: str) -> dict:
     # s3://bucket/key/path
     match = re.match(r"s3://([^/]+)/(.+)", uri)
     if not match:
@@ -97,29 +97,32 @@ def _load_from_s3(uri: str) -> Dict:
     s3 = boto3.client("s3")
     with tempfile.NamedTemporaryFile(suffix=".tfstate") as tmp:
         s3.download_file(bucket, key, tmp.name)
-        with open(tmp.name) as f:
+        with open(tmp.name, encoding="utf-8") as f:
             return json.load(f)
 
 
-def extract_resources(tfstate: Dict) -> List[Dict]:
+def extract_resources(tfstate: dict) -> list[dict]:
     """Extract all managed resources from Terraform state v4 format."""
     resources = []
     for resource in tfstate.get("resources", []):
         if resource.get("mode") != "managed":
             continue
         for instance in resource.get("instances", []):
-            resources.append({
-                "type":    resource["type"],
-                "name":    resource["name"],
-                "address": f"{resource['type']}.{resource['name']}",
-                "attributes": instance.get("attributes", {}),
-            })
+            resources.append(
+                {
+                    "type": resource["type"],
+                    "name": resource["name"],
+                    "address": f"{resource['type']}.{resource['name']}",
+                    "attributes": instance.get("attributes", {}),
+                }
+            )
     return resources
 
 
 # ── Live AWS fetchers ─────────────────────────────────────────────────────────
 
-def fetch_live_ec2_instance(instance_id: str, region: str) -> Optional[Dict]:
+
+def fetch_live_ec2_instance(instance_id: str, region: str) -> dict | None:
     try:
         ec2 = boto3.client("ec2", region_name=region)
         resp = ec2.describe_instances(InstanceIds=[instance_id])
@@ -128,20 +131,18 @@ def fetch_live_ec2_instance(instance_id: str, region: str) -> Optional[Dict]:
             return None
         instance = reservations[0]["Instances"][0]
         return {
-            "instance_type":     instance.get("InstanceType"),
-            "state":             instance["State"]["Name"],
-            "subnet_id":         instance.get("SubnetId"),
-            "vpc_id":            instance.get("VpcId"),
-            "key_name":          instance.get("KeyName"),
-            "iam_instance_profile": (
-                instance.get("IamInstanceProfile", {}).get("Arn")
-            ),
+            "instance_type": instance.get("InstanceType"),
+            "state": instance["State"]["Name"],
+            "subnet_id": instance.get("SubnetId"),
+            "vpc_id": instance.get("VpcId"),
+            "key_name": instance.get("KeyName"),
+            "iam_instance_profile": (instance.get("IamInstanceProfile", {}).get("Arn")),
         }
     except ClientError:
         return None
 
 
-def fetch_live_s3_bucket(bucket_name: str) -> Optional[Dict]:
+def fetch_live_s3_bucket(bucket_name: str) -> dict | None:
     try:
         s3 = boto3.client("s3")
         # Check bucket exists
@@ -167,33 +168,33 @@ def fetch_live_s3_bucket(bucket_name: str) -> Optional[Dict]:
             block_public = False
 
         return {
-            "versioning":   versioning_status,
-            "encryption":   encryption,
+            "versioning": versioning_status,
+            "encryption": encryption,
             "block_public_acls": block_public,
         }
     except ClientError:
         return None
 
 
-def fetch_live_rds_instance(db_identifier: str, region: str) -> Optional[Dict]:
+def fetch_live_rds_instance(db_identifier: str, region: str) -> dict | None:
     try:
         rds = boto3.client("rds", region_name=region)
         resp = rds.describe_db_instances(DBInstanceIdentifier=db_identifier)
         db = resp["DBInstances"][0]
         return {
-            "db_instance_class":  db.get("DBInstanceClass"),
-            "engine":             db.get("Engine"),
-            "engine_version":     db.get("EngineVersion"),
-            "multi_az":           db.get("MultiAZ"),
-            "storage_type":       db.get("StorageType"),
-            "allocated_storage":  db.get("AllocatedStorage"),
-            "deletion_protection":db.get("DeletionProtection"),
+            "db_instance_class": db.get("DBInstanceClass"),
+            "engine": db.get("Engine"),
+            "engine_version": db.get("EngineVersion"),
+            "multi_az": db.get("MultiAZ"),
+            "storage_type": db.get("StorageType"),
+            "allocated_storage": db.get("AllocatedStorage"),
+            "deletion_protection": db.get("DeletionProtection"),
         }
     except ClientError:
         return None
 
 
-def fetch_live_security_group(sg_id: str, region: str) -> Optional[Dict]:
+def fetch_live_security_group(sg_id: str, region: str) -> dict | None:
     try:
         ec2 = boto3.client("ec2", region_name=region)
         resp = ec2.describe_security_groups(GroupIds=[sg_id])
@@ -202,11 +203,11 @@ def fetch_live_security_group(sg_id: str, region: str) -> Optional[Dict]:
             return None
         sg = sgs[0]
         return {
-            "group_name":  sg.get("GroupName"),
+            "group_name": sg.get("GroupName"),
             "description": sg.get("Description"),
-            "vpc_id":      sg.get("VpcId"),
+            "vpc_id": sg.get("VpcId"),
             "ingress_rule_count": len(sg.get("IpPermissions", [])),
-            "egress_rule_count":  len(sg.get("IpPermissionsEgress", [])),
+            "egress_rule_count": len(sg.get("IpPermissionsEgress", [])),
         }
     except ClientError:
         return None
@@ -215,50 +216,50 @@ def fetch_live_security_group(sg_id: str, region: str) -> Optional[Dict]:
 # ── Drift comparators ─────────────────────────────────────────────────────────
 
 RESOURCE_FETCHERS = {
-    "aws_instance":       lambda attrs, region: fetch_live_ec2_instance(
-                              attrs.get("id", ""), region),
-    "aws_s3_bucket":      lambda attrs, region: fetch_live_s3_bucket(
-                              attrs.get("bucket", attrs.get("id", ""))),
-    "aws_db_instance":    lambda attrs, region: fetch_live_rds_instance(
-                              attrs.get("id", ""), region),
+    "aws_instance": lambda attrs, region: fetch_live_ec2_instance(attrs.get("id", ""), region),
+    "aws_s3_bucket": lambda attrs, region: fetch_live_s3_bucket(
+        attrs.get("bucket", attrs.get("id", ""))
+    ),
+    "aws_db_instance": lambda attrs, region: fetch_live_rds_instance(attrs.get("id", ""), region),
     "aws_security_group": lambda attrs, region: fetch_live_security_group(
-                              attrs.get("id", ""), region),
+        attrs.get("id", ""), region
+    ),
 }
 
 # Attributes to compare per resource type (state_key -> live_key)
 ATTRIBUTES_TO_CHECK = {
     "aws_instance": {
         "instance_type": "instance_type",
-        "subnet_id":     "subnet_id",
+        "subnet_id": "subnet_id",
     },
     "aws_s3_bucket": {
         "versioning": "versioning",
     },
     "aws_db_instance": {
-        "instance_class":    "db_instance_class",
-        "engine_version":    "engine_version",
-        "multi_az":          "multi_az",
-        "deletion_protection":"deletion_protection",
+        "instance_class": "db_instance_class",
+        "engine_version": "engine_version",
+        "multi_az": "multi_az",
+        "deletion_protection": "deletion_protection",
     },
     "aws_security_group": {
         "description": "description",
-        "vpc_id":      "vpc_id",
+        "vpc_id": "vpc_id",
     },
 }
 
 
 def compare_resource(
-    resource: Dict,
+    resource: dict,
     region: str,
-) -> Tuple[bool, ResourceDrift]:
+) -> tuple[bool, ResourceDrift]:
     """
     Compare a single resource from Terraform state against live AWS state.
     Returns (is_drifted, ResourceDrift).
     """
-    rtype    = resource["type"]
-    address  = resource["address"]
-    attrs    = resource["attributes"]
-    res_id   = attrs.get("id", attrs.get("bucket", address))
+    rtype = resource["type"]
+    address = resource["address"]
+    attrs = resource["attributes"]
+    res_id = attrs.get("id", attrs.get("bucket", address))
 
     if rtype not in RESOURCE_FETCHERS:
         # Resource type not supported for drift detection yet
@@ -283,16 +284,18 @@ def compare_resource(
 
     # Compare known attributes
     checks = ATTRIBUTES_TO_CHECK.get(rtype, {})
-    diffs  = []
+    diffs = []
     for state_key, live_key in checks.items():
         state_val = attrs.get(state_key)
-        live_val  = live.get(live_key)
+        live_val = live.get(live_key)
         if state_val != live_val and not (state_val is None and live_val is None):
-            diffs.append(AttributeDiff(
-                attribute=state_key,
-                state_value=state_val,
-                live_value=live_val,
-            ))
+            diffs.append(
+                AttributeDiff(
+                    attribute=state_key,
+                    state_value=state_val,
+                    live_value=live_val,
+                )
+            )
 
     if diffs:
         return True, ResourceDrift(
@@ -315,15 +318,20 @@ def compare_resource(
 
 # ── Output formatters ─────────────────────────────────────────────────────────
 
+
 def print_drift_table(report: DriftReport) -> None:
     if not report.has_drift:
-        console.print("\n[bold green]✅ No drift detected.[/bold green] "
-                      f"All {report.total_resources} resources match Terraform state.\n")
+        console.print(
+            "\n[bold green]✅ No drift detected.[/bold green] "
+            f"All {report.total_resources} resources match Terraform state.\n"
+        )
         return
 
-    console.print(f"\n[bold red]⚠️  Drift detected[/bold red] — "
-                  f"{report.drifted} modified · {report.missing} missing "
-                  f"of {report.total_resources} total resources\n")
+    console.print(
+        f"\n[bold red]⚠️  Drift detected[/bold red] — "
+        f"{report.drifted} modified · {report.missing} missing "
+        f"of {report.total_resources} total resources\n"
+    )
 
     for drift in report.drifts:
         colour = "red" if drift.drift_type == DriftType.MISSING else "yellow"
@@ -345,23 +353,18 @@ def print_drift_table(report: DriftReport) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 @app.command("run")
 def run(
     tfstate: str = typer.Option(
-        ..., "--tfstate", "-t",
-        help="Path to terraform.tfstate file or S3 URI (s3://bucket/key)"
+        ..., "--tfstate", "-t", help="Path to terraform.tfstate file or S3 URI (s3://bucket/key)"
     ),
     region: str = typer.Option(
-        "us-east-1", "--region", "-r",
-        help="AWS region to query for live resource state"
+        "us-east-1", "--region", "-r", help="AWS region to query for live resource state"
     ),
-    output: str = typer.Option(
-        "table", "--output", "-o",
-        help="Output format: table | json"
-    ),
+    output: str = typer.Option("table", "--output", "-o", help="Output format: table | json"),
     fail_on_drift: bool = typer.Option(
-        False, "--fail-on-drift",
-        help="Exit with code 1 if any drift is detected (useful in CI)"
+        False, "--fail-on-drift", help="Exit with code 1 if any drift is detected (useful in CI)"
     ),
 ):
     """
@@ -372,20 +375,22 @@ def run(
         python main.py drift-detect run --tfstate s3://my-tfstate-bucket/prod/terraform.tfstate\n
         python main.py drift-detect run --tfstate ./terraform.tfstate --output json
     """
-    console.print(f"\n[bold blue]🔎 Scanning for drift[/bold blue] — "
-                  f"state: [cyan]{tfstate}[/cyan] · region: [cyan]{region}[/cyan]\n")
+    console.print(
+        f"\n[bold blue]🔎 Scanning for drift[/bold blue] — "
+        f"state: [cyan]{tfstate}[/cyan] · region: [cyan]{region}[/cyan]\n"
+    )
 
     try:
         state = load_tfstate(tfstate)
     except (FileNotFoundError, ValueError) as e:
         console.print(f"[red]Error loading state file: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     resources = extract_resources(state)
     console.print(f"Found [cyan]{len(resources)}[/cyan] managed resources in state file\n")
 
-    drifts     = []
-    clean      = 0
+    drifts = []
+    clean = 0
 
     for resource in resources:
         is_drifted, result = compare_resource(resource, region)

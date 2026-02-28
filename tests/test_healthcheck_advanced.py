@@ -5,17 +5,17 @@ Advanced unit tests for aws_healthcheck.py covering edge cases and error paths
 to reach maximum code coverage.
 """
 
+from unittest.mock import MagicMock, patch
+
 import boto3
-import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
-from unittest.mock import patch, MagicMock
-from botocore.exceptions import ClientError, BotoCoreError
 
 from commands.aws_healthcheck import (
     HealthStatus,
     check_eks,
-    check_rds,
     check_elasticache,
+    check_rds,
     check_sqs,
 )
 
@@ -23,31 +23,32 @@ REGION = "us-east-1"
 
 # ── EKS Advanced Tests ────────────────────────────────────────────────────────
 
+
 @patch("commands.aws_healthcheck.boto3.client")
 def test_eks_nodegroup_health_states(mock_client):
     """Test EKS nodegroup health logic: DEGRADED and FAILED states."""
     mock_eks = MagicMock()
     mock_client.return_value = mock_eks
-    
+
     # 1. Mock list_clusters
     mock_eks.list_clusters.return_value = {"clusters": ["prod-cluster"]}
-    
+
     # 2. Mock describe_cluster (ACTIVE)
     mock_eks.describe_cluster.return_value = {
         "cluster": {"name": "prod-cluster", "status": "ACTIVE", "version": "1.28"}
     }
-    
+
     # 3. Mock list_nodegroups
     mock_eks.list_nodegroups.return_value = {"nodegroups": ["ng-degraded", "ng-failed"]}
-    
+
     # 4. Mock describe_nodegroup side effects
-    def describe_ng(clusterName, nodegroupName):
+    def describe_ng(clusterName, nodegroupName):  # noqa: N803
         if nodegroupName == "ng-degraded":
             return {"nodegroup": {"status": "DEGRADED"}}
         return {"nodegroup": {"status": "CREATE_FAILED"}}
-        
+
     mock_eks.describe_nodegroup.side_effect = describe_ng
-    
+
     results = check_eks(REGION)
     assert results[0].status == HealthStatus.UNHEALTHY
     assert "ng-failed" in results[0].message
@@ -64,7 +65,7 @@ def test_eks_nodegroup_degraded_only(mock_client):
     }
     mock_eks.list_nodegroups.return_value = {"nodegroups": ["ng-degraded"]}
     mock_eks.describe_nodegroup.return_value = {"nodegroup": {"status": "DEGRADED"}}
-    
+
     results = check_eks(REGION)
     assert results[0].status == HealthStatus.DEGRADED
     assert "degraded" in results[0].message.lower()
@@ -79,13 +80,14 @@ def test_eks_inactive_cluster_is_unhealthy(mock_client):
     mock_eks.describe_cluster.return_value = {
         "cluster": {"name": "creating-cluster", "status": "CREATING"}
     }
-    
+
     results = check_eks(REGION)
     assert results[0].status == HealthStatus.UNHEALTHY
     assert "CREATING" in results[0].message
 
 
 # ── RDS Advanced Tests ────────────────────────────────────────────────────────
+
 
 @mock_aws
 def test_rds_single_az_is_healthy_but_noted():
@@ -98,7 +100,7 @@ def test_rds_single_az_is_healthy_but_noted():
         MultiAZ=False,
         AllocatedStorage=20,
     )
-    
+
     results = check_rds(REGION)
     db_result = next(r for r in results if r.resource == "single-db")
     assert db_result.status == HealthStatus.HEALTHY
@@ -121,15 +123,19 @@ def test_rds_degraded_status():
         mock_client.return_value = mock_rds
         mock_paginator = MagicMock()
         mock_rds.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [{
-            "DBInstances": [{
-                "DBInstanceIdentifier": "degraded-db",
-                "DBInstanceStatus": "storage-full",
-                "MultiAZ": False,
-                "Engine": "postgres"
-            }]
-        }]
-        
+        mock_paginator.paginate.return_value = [
+            {
+                "DBInstances": [
+                    {
+                        "DBInstanceIdentifier": "degraded-db",
+                        "DBInstanceStatus": "storage-full",
+                        "MultiAZ": False,
+                        "Engine": "postgres",
+                    }
+                ]
+            }
+        ]
+
         results = check_rds(REGION)
         assert results[0].status == HealthStatus.DEGRADED
         assert "storage-full" in results[0].message
@@ -144,13 +150,14 @@ def test_rds_describe_instances_error(mock_client):
     mock_rds.get_paginator.side_effect = ClientError(
         {"Error": {"Code": "AccessDenied", "Message": "Denied"}}, "GetPaginator"
     )
-    
+
     results = check_rds(REGION)
     assert results[0].status == HealthStatus.UNKNOWN
     assert "Failed to describe" in results[0].message
 
 
 # ── ElastiCache Advanced Tests ──────────────────────────────────────────────
+
 
 @patch("commands.aws_healthcheck.boto3.client")
 def test_elasticache_unhealthy_state(mock_client):
@@ -163,12 +170,12 @@ def test_elasticache_unhealthy_state(mock_client):
                 "ReplicationGroupId": "creating-rg",
                 "Status": "creating",
                 "AutomaticFailover": "enabled",
-                "NodeGroups": []
+                "NodeGroups": [],
             }
         ]
     }
     mock_ec.describe_cache_clusters.return_value = {"CacheClusters": []}
-    
+
     results = check_elasticache(REGION)
     assert results[0].status == HealthStatus.UNHEALTHY
     assert "creating" in results[0].message
@@ -189,12 +196,12 @@ def test_elasticache_memcached_health(mock_client):
                 "NumCacheNodes": 2,
                 "CacheNodes": [
                     {"CacheNodeId": "001", "CacheNodeStatus": "available"},
-                    {"CacheNodeId": "002", "CacheNodeStatus": "incompatible-network"}
-                ]
+                    {"CacheNodeId": "002", "CacheNodeStatus": "incompatible-network"},
+                ],
             }
         ]
     }
-    
+
     results = check_elasticache(REGION)
     mem_result = next(r for r in results if r.resource == "mem-cluster")
     assert mem_result.status == HealthStatus.DEGRADED
@@ -202,6 +209,7 @@ def test_elasticache_memcached_health(mock_client):
 
 
 # ── SQS Advanced Tests ────────────────────────────────────────────────────────
+
 
 @patch("commands.aws_healthcheck.boto3.client")
 def test_sqs_get_attributes_error(mock_client):
@@ -212,7 +220,7 @@ def test_sqs_get_attributes_error(mock_client):
         {"Error": {"Code": "NonExistentQueue", "Message": "Queue not found"}}, "GetQueueAttributes"
     )
     mock_client.return_value = mock_sqs
-    
+
     results = check_sqs(REGION)
     assert results[0].status == HealthStatus.UNKNOWN
     assert "API error" in results[0].message

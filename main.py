@@ -13,9 +13,10 @@ Usage:
 """
 
 import typer
-from commands.aws_healthcheck import app as healthcheck_app
-from commands.aws_drift_detector import app as drift_app
+
 from commands.aws_cost_analyzer import app as cost_app
+from commands.aws_drift_detector import app as drift_app
+from commands.aws_healthcheck import app as healthcheck_app
 from commands.aws_remediation import app as remediation_app
 
 app = typer.Typer(
@@ -25,10 +26,18 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-app.add_typer(healthcheck_app, name="healthcheck",  help="Run concurrent health checks across AWS services.")
-app.add_typer(drift_app,       name="drift-detect", help="Detect drift between Terraform state and live AWS resources.")
-app.add_typer(cost_app,        name="cost-analyze",  help="Generate per-service cost attribution reports.")
-app.add_typer(remediation_app, name="remediate",     help="Automated remediation for known AWS failure modes.")
+app.add_typer(
+    healthcheck_app, name="healthcheck", help="Run concurrent health checks across AWS services."
+)
+app.add_typer(
+    drift_app,
+    name="drift-detect",
+    help="Detect drift between Terraform state and live AWS resources.",
+)
+app.add_typer(cost_app, name="cost-analyze", help="Generate per-service cost attribution reports.")
+app.add_typer(
+    remediation_app, name="remediate", help="Automated remediation for known AWS failure modes."
+)
 
 if __name__ == "__main__":
     app()

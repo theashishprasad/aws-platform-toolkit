@@ -4,18 +4,16 @@ test_healthcheck.py
 Unit tests for aws_healthcheck.py using moto to mock all AWS API calls.
 """
 
-import boto3
-import pytest
-from moto import mock_aws
-from unittest.mock import patch, MagicMock
-from botocore.exceptions import ClientError
 from datetime import datetime, timezone
+
+import boto3
+from moto import mock_aws
 
 from commands.aws_healthcheck import (
     HealthStatus,
     check_eks,
-    check_rds,
     check_elasticache,
+    check_rds,
     check_sqs,
     run_checks,
 )
@@ -24,6 +22,7 @@ REGION = "us-east-1"
 
 
 # ── ElastiCache tests ─────────────────────────────────────────────────────────
+
 
 @mock_aws
 def test_elasticache_no_clusters_returns_unknown():
@@ -45,6 +44,7 @@ def test_elasticache_available_rg_is_healthy():
 
 
 # ── EKS tests ─────────────────────────────────────────────────────────────────
+
 
 @mock_aws
 def test_eks_no_clusters_returns_unknown():
@@ -89,6 +89,7 @@ def test_eks_multiple_clusters():
 
 
 # ── RDS tests ─────────────────────────────────────────────────────────────────
+
 
 @mock_aws
 def test_rds_no_instances_returns_unknown():
@@ -135,6 +136,7 @@ def test_rds_result_has_details():
 
 
 # ── SQS tests ─────────────────────────────────────────────────────────────────
+
 
 @mock_aws
 def test_sqs_no_queues_returns_unknown():
@@ -187,6 +189,7 @@ def test_sqs_multiple_queues():
 
 # ── Concurrent orchestrator tests ─────────────────────────────────────────────
 
+
 @mock_aws
 def test_run_checks_concurrent_returns_all_services():
     """Verify concurrent execution returns results for all requested services."""
@@ -227,6 +230,7 @@ def test_run_checks_duration_recorded():
 
 # ── Model tests ───────────────────────────────────────────────────────────────
 
+
 def test_health_status_values():
     assert HealthStatus.HEALTHY == "HEALTHY"
     assert HealthStatus.UNHEALTHY == "UNHEALTHY"
@@ -234,22 +238,83 @@ def test_health_status_values():
 
 def test_health_report_overall_unhealthy_if_any_unhealthy():
     from commands.aws_healthcheck import HealthReport, ServiceHealth
-    h1 = ServiceHealth("S1", "R1", HealthStatus.HEALTHY, "ok", "us-east-1", datetime.now(timezone.utc).isoformat(), {})
-    h2 = ServiceHealth("S2", "R2", HealthStatus.UNHEALTHY, "err", "us-east-1", datetime.now(timezone.utc).isoformat(), {})
-    report = HealthReport(total=2, healthy=1, degraded=0, unhealthy=1, unknown=0, duration_seconds=0.1, checks=[h1, h2])
+
+    h1 = ServiceHealth(
+        "S1",
+        "R1",
+        HealthStatus.HEALTHY,
+        "ok",
+        "us-east-1",
+        datetime.now(timezone.utc).isoformat(),
+        {},
+    )
+    h2 = ServiceHealth(
+        "S2",
+        "R2",
+        HealthStatus.UNHEALTHY,
+        "err",
+        "us-east-1",
+        datetime.now(timezone.utc).isoformat(),
+        {},
+    )
+    report = HealthReport(
+        total=2,
+        healthy=1,
+        degraded=0,
+        unhealthy=1,
+        unknown=0,
+        duration_seconds=0.1,
+        checks=[h1, h2],
+    )
     assert report.overall_status == HealthStatus.UNHEALTHY
 
 
 def test_health_report_overall_degraded_if_no_unhealthy():
     from commands.aws_healthcheck import HealthReport, ServiceHealth
-    h1 = ServiceHealth("S1", "R1", HealthStatus.HEALTHY, "ok", "us-east-1", datetime.now(timezone.utc).isoformat(), {})
-    h2 = ServiceHealth("S2", "R2", HealthStatus.DEGRADED, "warn", "us-east-1", datetime.now(timezone.utc).isoformat(), {})
-    report = HealthReport(total=2, healthy=1, degraded=1, unhealthy=0, unknown=0, duration_seconds=0.1, checks=[h1, h2])
+
+    h1 = ServiceHealth(
+        "S1",
+        "R1",
+        HealthStatus.HEALTHY,
+        "ok",
+        "us-east-1",
+        datetime.now(timezone.utc).isoformat(),
+        {},
+    )
+    h2 = ServiceHealth(
+        "S2",
+        "R2",
+        HealthStatus.DEGRADED,
+        "warn",
+        "us-east-1",
+        datetime.now(timezone.utc).isoformat(),
+        {},
+    )
+    report = HealthReport(
+        total=2,
+        healthy=1,
+        degraded=1,
+        unhealthy=0,
+        unknown=0,
+        duration_seconds=0.1,
+        checks=[h1, h2],
+    )
     assert report.overall_status == HealthStatus.DEGRADED
 
 
 def test_health_report_overall_healthy_when_all_healthy():
     from commands.aws_healthcheck import HealthReport, ServiceHealth
-    h1 = ServiceHealth("S1", "R1", HealthStatus.HEALTHY, "ok", "us-east-1", datetime.now(timezone.utc).isoformat(), {})
-    report = HealthReport(total=1, healthy=1, degraded=0, unhealthy=0, unknown=0, duration_seconds=0.1, checks=[h1])
+
+    h1 = ServiceHealth(
+        "S1",
+        "R1",
+        HealthStatus.HEALTHY,
+        "ok",
+        "us-east-1",
+        datetime.now(timezone.utc).isoformat(),
+        {},
+    )
+    report = HealthReport(
+        total=1, healthy=1, degraded=0, unhealthy=0, unknown=0, duration_seconds=0.1, checks=[h1]
+    )
     assert report.overall_status == HealthStatus.HEALTHY

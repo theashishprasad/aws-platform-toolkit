@@ -4,15 +4,11 @@ test_cost_analyzer.py
 Unit tests for aws_cost_analyzer.py using moto to mock Cost Explorer.
 """
 
-from datetime import datetime, timedelta, timezone
-import pytest
 from moto import mock_aws
-import boto3
-from botocore.exceptions import ClientError
 
 from commands.aws_cost_analyzer import (
-    ServiceCost,
     CostReport,
+    ServiceCost,
     _date_range,
     _parse_results,
     build_report,
@@ -51,9 +47,13 @@ def test_parse_results_aggregates_costs():
 def test_service_cost_anomaly_detection():
     # >20% change = anomaly
     sc = ServiceCost(
-        service="EC2", amount_usd=120, unit="USD",
-        period_start="S", period_end="E",
-        prev_amount_usd=100, change_pct=20.0
+        service="EC2",
+        amount_usd=120,
+        unit="USD",
+        period_start="S",
+        period_end="E",
+        prev_amount_usd=100,
+        change_pct=20.0,
     )
     assert sc.is_anomaly is False  # Exactly 20 is not > 20
 
@@ -82,30 +82,42 @@ def test_cost_report_structure():
         currency="USD",
         services=[
             ServiceCost("EC2", 100.0, "USD", "S", "E", 66.3, 80.0, 25.0),
-            ServiceCost("S3",  50.75, "USD", "S", "E", 33.7, 20.0, 153.75),
+            ServiceCost("S3", 50.75, "USD", "S", "E", 33.7, 20.0, 153.75),
         ],
-        anomalies=[]
+        anomalies=[],
     )
     assert report.total_usd == 150.75
     assert len(report.services) == 2
     assert report.total_change_pct == 50.75
 
+
 def test_cost_to_csv():
     report = CostReport(
-        period_start="2024-01-01", period_end="2024-01-02",
-        total_usd=100.0, prev_total_usd=None, total_change_pct=None,
-        currency="USD", services=[ServiceCost("EC2", 100.0, "USD", "S", "E", 100.0, None, None)]
+        period_start="2024-01-01",
+        period_end="2024-01-02",
+        total_usd=100.0,
+        prev_total_usd=None,
+        total_change_pct=None,
+        currency="USD",
+        services=[ServiceCost("EC2", 100.0, "USD", "S", "E", 100.0, None, None)],
     )
     from commands.aws_cost_analyzer import to_csv
+
     csv_data = to_csv(report)
     assert "EC2,100.0,100.0" in csv_data
 
+
 def test_print_cost_table(capsys):
     from commands.aws_cost_analyzer import print_cost_table
+
     report = CostReport(
-        period_start="2024-01-01", period_end="2024-01-02",
-        total_usd=100.0, prev_total_usd=None, total_change_pct=None,
-        currency="USD", services=[ServiceCost("EC2", 100.0, "USD", "S", "E", 100.0, None, None)]
+        period_start="2024-01-01",
+        period_end="2024-01-02",
+        total_usd=100.0,
+        prev_total_usd=None,
+        total_change_pct=None,
+        currency="USD",
+        services=[ServiceCost("EC2", 100.0, "USD", "S", "E", 100.0, None, None)],
     )
     print_cost_table(report)
     captured = capsys.readouterr()

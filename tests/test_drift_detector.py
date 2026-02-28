@@ -4,22 +4,22 @@ test_drift_detector.py
 Unit tests for aws_drift_detector.py using moto.
 """
 
-import os
 import json
+
 import boto3
 import pytest
 from moto import mock_aws
 
 from commands.aws_drift_detector import (
     DriftType,
-    ResourceDrift,
-    load_tfstate,
-    extract_resources,
     compare_resource,
+    extract_resources,
     fetch_live_s3_bucket,
+    load_tfstate,
 )
 
 REGION = "us-east-1"
+
 
 @mock_aws
 def test_compare_rds_instance_no_drift():
@@ -38,9 +38,13 @@ def test_compare_rds_instance_no_drift():
         "name": "primary",
         "address": "aws_db_instance.primary",
         "attributes": {
-            "id": "my-db", "instance_class": "db.t3.micro", "engine": "postgres",
-            "engine_version": "15.3", "multi_az": False, "deletion_protection": False,
-        }
+            "id": "my-db",
+            "instance_class": "db.t3.micro",
+            "engine": "postgres",
+            "engine_version": "15.3",
+            "multi_az": False,
+            "deletion_protection": False,
+        },
     }
     is_drifted, result = compare_resource(resource, REGION)
     assert not is_drifted
@@ -58,13 +62,14 @@ def test_compare_security_group_no_drift():
         "type": "aws_security_group",
         "name": "allow_all",
         "address": "aws_security_group.allow_all",
-        "attributes": {"id": sg_id, "description": "test", "vpc_id": vpc_id}
+        "attributes": {"id": sg_id, "description": "test", "vpc_id": vpc_id},
     }
     is_drifted, result = compare_resource(resource, REGION)
     assert not is_drifted
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def sample_tfstate(tmp_path):
@@ -75,22 +80,16 @@ def sample_tfstate(tmp_path):
             {
                 "type": "aws_instance",
                 "name": "web",
-                "instances": [
-                    {
-                        "attributes": {
-                            "id": "i-123",
-                            "instance_type": "t3.medium"
-                        }
-                    }
-                ]
+                "instances": [{"attributes": {"id": "i-123", "instance_type": "t3.medium"}}],
             }
-        ]
+        ],
     }
     d.write_text(json.dumps(content))
     return str(d)
 
 
 # ── load_tfstate tests ────────────────────────────────────────────────────────
+
 
 def test_load_tfstate_from_file(sample_tfstate):
     state = load_tfstate(sample_tfstate)
@@ -109,17 +108,14 @@ def test_load_tfstate_invalid_s3_uri_raises():
 
 # ── extract_resources tests ───────────────────────────────────────────────────
 
+
 def test_extract_resources_empty_state():
     state = {"resources": []}
     assert extract_resources(state) == []
 
 
 def test_extract_resources_skips_data_sources():
-    state = {
-        "resources": [
-            {"mode": "data", "type": "aws_ami", "name": "ubuntu", "instances": []}
-        ]
-    }
+    state = {"resources": [{"mode": "data", "type": "aws_ami", "name": "ubuntu", "instances": []}]}
     assert extract_resources(state) == []
 
 
@@ -130,7 +126,7 @@ def test_extract_resources_managed_resource():
                 "mode": "managed",
                 "type": "aws_s3_bucket",
                 "name": "logs",
-                "instances": [{"attributes": {"id": "my-bucket"}}]
+                "instances": [{"attributes": {"id": "my-bucket"}}],
             }
         ]
     }
@@ -148,8 +144,8 @@ def test_extract_resources_multiple_instances():
                 "name": "app",
                 "instances": [
                     {"index_key": 0, "attributes": {"id": "i-0"}},
-                    {"index_key": 1, "attributes": {"id": "i-1"}}
-                ]
+                    {"index_key": 1, "attributes": {"id": "i-1"}},
+                ],
             }
         ]
     }
@@ -158,6 +154,7 @@ def test_extract_resources_multiple_instances():
 
 
 # ── compare_resource tests ────────────────────────────────────────────────────
+
 
 @mock_aws
 def test_compare_s3_bucket_no_drift():
@@ -169,10 +166,15 @@ def test_compare_s3_bucket_no_drift():
         "type": "aws_s3_bucket",
         "name": "logs",
         "address": "aws_s3_bucket.logs",
-        "attributes": {"id": "my-test-bucket", "bucket": "my-test-bucket", "versioning": "Disabled"},
+        "attributes": {
+            "id": "my-test-bucket",
+            "bucket": "my-test-bucket",
+            "versioning": "Disabled",
+        },
     }
     is_drifted, result = compare_resource(resource, REGION)
     assert not is_drifted
+
 
 @mock_aws
 def test_compare_s3_bucket_drifted_versioning():
@@ -180,19 +182,23 @@ def test_compare_s3_bucket_drifted_versioning():
     s3 = boto3.client("s3", region_name=REGION)
     s3.create_bucket(Bucket="versioned-bucket")
     s3.put_bucket_versioning(
-        Bucket="versioned-bucket",
-        VersioningConfiguration={"Status": "Enabled"}
+        Bucket="versioned-bucket", VersioningConfiguration={"Status": "Enabled"}
     )
 
     resource = {
         "type": "aws_s3_bucket",
         "name": "logs",
         "address": "aws_s3_bucket.logs",
-        "attributes": {"id": "versioned-bucket", "bucket": "versioned-bucket", "versioning": "Disabled"},
+        "attributes": {
+            "id": "versioned-bucket",
+            "bucket": "versioned-bucket",
+            "versioning": "Disabled",
+        },
     }
     is_drifted, result = compare_resource(resource, REGION)
     assert is_drifted is True
     assert result.drift_type == DriftType.MODIFIED
+
 
 @mock_aws
 def test_compare_s3_bucket_drifted_encryption():
@@ -203,10 +209,11 @@ def test_compare_s3_bucket_drifted_encryption():
         Bucket="encrypted-bucket",
         ServerSideEncryptionConfiguration={
             "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
-        }
+        },
     )
     live = fetch_live_s3_bucket("encrypted-bucket")
     assert live["encryption"] == "AES256"
+
 
 @mock_aws
 def test_compare_s3_bucket_public_block_fetch():
@@ -214,11 +221,11 @@ def test_compare_s3_bucket_public_block_fetch():
     s3 = boto3.client("s3", region_name=REGION)
     s3.create_bucket(Bucket="public-bucket")
     s3.put_public_access_block(
-        Bucket="public-bucket",
-        PublicAccessBlockConfiguration={"BlockPublicAcls": True}
+        Bucket="public-bucket", PublicAccessBlockConfiguration={"BlockPublicAcls": True}
     )
     live = fetch_live_s3_bucket("public-bucket")
     assert live["block_public_acls"] is True
+
 
 @mock_aws
 def test_compare_s3_bucket_missing_in_aws():
@@ -227,7 +234,7 @@ def test_compare_s3_bucket_missing_in_aws():
         "type": "aws_s3_bucket",
         "id": "gone-bucket",
         "address": "aws_s3_bucket.gone",
-        "attributes": {"id": "gone-bucket"}
+        "attributes": {"id": "gone-bucket"},
     }
     is_drifted, result = compare_resource(resource, REGION)
     assert is_drifted is True
@@ -240,7 +247,7 @@ def test_compare_ec2_missing_instance():
     resource = {
         "type": "aws_instance",
         "address": "aws_instance.web",
-        "attributes": {"id": "i-1234567890abcdef0"}
+        "attributes": {"id": "i-1234567890abcdef0"},
     }
     is_drifted, result = compare_resource(resource, REGION)
     assert is_drifted is True
@@ -261,7 +268,7 @@ def test_extract_resources_preserves_all_attributes():
                 "mode": "managed",
                 "type": "aws_db_instance",
                 "name": "db",
-                "instances": [{"attributes": {"id": "db-1", "engine": "postgres"}}]
+                "instances": [{"attributes": {"id": "db-1", "engine": "postgres"}}],
             }
         ]
     }
