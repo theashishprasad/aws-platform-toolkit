@@ -8,6 +8,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 import boto3
 import typer
@@ -35,7 +36,7 @@ class RemediationAction:
     status: RemediationStatus
     message: str
     executed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    details: dict = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -349,7 +350,8 @@ def run(
     region: str = "us-east-1",
     execute: bool = False,
     output: str = "table",
-):
+) -> None:
+    """Automated remediation run."""
     dry_run = not execute
     if action == "restart-unhealthy-pods":
         report = restart_unhealthy_pods(cluster or "unknown", region, namespace, dry_run)

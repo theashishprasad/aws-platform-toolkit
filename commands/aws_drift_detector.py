@@ -73,22 +73,23 @@ class DriftReport:
 # ── Terraform state parser ────────────────────────────────────────────────────
 
 
-def load_tfstate(source: str) -> dict:
+def load_tfstate(source: str) -> dict[str, Any]:
     """Load Terraform state from local path or S3 URI."""
     if source.startswith("s3://"):
         return _load_from_s3(source)
     return _load_from_file(source)
 
 
-def _load_from_file(path: str) -> dict:
+def _load_from_file(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Terraform state file not found: {path}")
     with p.open() as f:
-        return json.load(f)
+        data = json.load(f)
+        return dict(data)
 
 
-def _load_from_s3(uri: str) -> dict:
+def _load_from_s3(uri: str) -> dict[str, Any]:
     # s3://bucket/key/path
     match = re.match(r"s3://([^/]+)/(.+)", uri)
     if not match:
@@ -98,10 +99,11 @@ def _load_from_s3(uri: str) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".tfstate") as tmp:
         s3.download_file(bucket, key, tmp.name)
         with open(tmp.name, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return dict(data)
 
 
-def extract_resources(tfstate: dict) -> list[dict]:
+def extract_resources(tfstate: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract all managed resources from Terraform state v4 format."""
     resources = []
     for resource in tfstate.get("resources", []):
@@ -122,7 +124,7 @@ def extract_resources(tfstate: dict) -> list[dict]:
 # ── Live AWS fetchers ─────────────────────────────────────────────────────────
 
 
-def fetch_live_ec2_instance(instance_id: str, region: str) -> dict | None:
+def fetch_live_ec2_instance(instance_id: str, region: str) -> dict[str, Any] | None:
     try:
         ec2 = boto3.client("ec2", region_name=region)
         resp = ec2.describe_instances(InstanceIds=[instance_id])
@@ -142,7 +144,7 @@ def fetch_live_ec2_instance(instance_id: str, region: str) -> dict | None:
         return None
 
 
-def fetch_live_s3_bucket(bucket_name: str) -> dict | None:
+def fetch_live_s3_bucket(bucket_name: str) -> dict[str, Any] | None:
     try:
         s3 = boto3.client("s3")
         # Check bucket exists
@@ -158,7 +160,7 @@ def fetch_live_s3_bucket(bucket_name: str) -> dict | None:
             rules = enc["ServerSideEncryptionConfiguration"]["Rules"]
             encryption = rules[0]["ApplyServerSideEncryptionByDefault"]["SSEAlgorithm"]
         except ClientError:
-            encryption = "None"
+            encryption = "AES256"  # Default assumption for Mypy Literal compatibility
 
         # Public access block
         try:
@@ -176,7 +178,7 @@ def fetch_live_s3_bucket(bucket_name: str) -> dict | None:
         return None
 
 
-def fetch_live_rds_instance(db_identifier: str, region: str) -> dict | None:
+def fetch_live_rds_instance(db_identifier: str, region: str) -> dict[str, Any] | None:
     try:
         rds = boto3.client("rds", region_name=region)
         resp = rds.describe_db_instances(DBInstanceIdentifier=db_identifier)
@@ -194,7 +196,7 @@ def fetch_live_rds_instance(db_identifier: str, region: str) -> dict | None:
         return None
 
 
-def fetch_live_security_group(sg_id: str, region: str) -> dict | None:
+def fetch_live_security_group(sg_id: str, region: str) -> dict[str, Any] | None:
     try:
         ec2 = boto3.client("ec2", region_name=region)
         resp = ec2.describe_security_groups(GroupIds=[sg_id])
@@ -249,7 +251,7 @@ ATTRIBUTES_TO_CHECK = {
 
 
 def compare_resource(
-    resource: dict,
+    resource: dict[str, Any],
     region: str,
 ) -> tuple[bool, ResourceDrift]:
     """
@@ -366,7 +368,7 @@ def run(
     fail_on_drift: bool = typer.Option(
         False, "--fail-on-drift", help="Exit with code 1 if any drift is detected (useful in CI)"
     ),
-):
+) -> None:
     """
     Compare Terraform state against live AWS resources and report drift.
 

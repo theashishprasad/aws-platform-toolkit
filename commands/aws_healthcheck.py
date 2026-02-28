@@ -13,10 +13,12 @@ Usage:
 
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any, Literal
 
 import boto3
 import typer
@@ -47,7 +49,7 @@ class ServiceHealth:
     message: str
     region: str
     checked_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    details: dict = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -66,7 +68,7 @@ class HealthReport:
             return HealthStatus.UNHEALTHY
         if self.degraded > 0:
             return HealthStatus.DEGRADED
-        if self.unknown == self.total:
+        if self.unknown == self.total and self.total > 0:
             return HealthStatus.UNKNOWN
         return HealthStatus.HEALTHY
 
@@ -367,6 +369,31 @@ def check_elasticache(region: str) -> list[ServiceHealth]:
 
 # ── SQS health check ──────────────────────────────────────────────────────────
 
+SQS_ATTR_NAME = Literal[
+    "All",
+    "Policy",
+    "VisibilityTimeout",
+    "MaximumMessageSize",
+    "MessageRetentionPeriod",
+    "ApproximateNumberOfMessages",
+    "ApproximateNumberOfMessagesNotVisible",
+    "CreatedTimestamp",
+    "LastModifiedTimestamp",
+    "QueueArn",
+    "ApproximateNumberOfMessagesDelayed",
+    "DelaySeconds",
+    "ReceiveMessageWaitTimeSeconds",
+    "RedrivePolicy",
+    "FifoQueue",
+    "ContentBasedDeduplication",
+    "KmsMasterKeyId",
+    "KmsDataKeyReusePeriodSeconds",
+    "DeduplicationScope",
+    "FifoThroughputLimit",
+    "RedriveAllowPolicy",
+    "SqsManagedSseEnabled",
+]
+
 
 def check_sqs(
     region: str, depth_threshold: int = 1000, dlq_threshold: int = 1
@@ -393,7 +420,7 @@ def check_sqs(
                 )
             ]
 
-        attrs_to_fetch = [
+        attrs_to_fetch: Sequence[SQS_ATTR_NAME] = [
             "ApproximateNumberOfMessages",
             "ApproximateNumberOfMessagesNotVisible",
             "ApproximateNumberOfMessagesDelayed",
@@ -473,7 +500,7 @@ def check_sqs(
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-SERVICE_CHECKERS = {
+SERVICE_CHECKERS: dict[str, Callable[..., list[ServiceHealth]]] = {
     "eks": check_eks,
     "rds": check_rds,
     "elasticache": check_elasticache,
@@ -481,13 +508,13 @@ SERVICE_CHECKERS = {
 }
 
 
-def run_checks(services: list[str], region: str, **kwargs) -> HealthReport:
+def run_checks(services: list[str], region: str, **kwargs: Any) -> HealthReport:
     """Run all requested service checks concurrently using ThreadPoolExecutor."""
     all_results: list[ServiceHealth] = []
     start = time.monotonic()
 
     with ThreadPoolExecutor(max_workers=max(1, len(services))) as executor:
-        futures = {
+        futures: dict[Future[list[ServiceHealth]], str] = {
             executor.submit(SERVICE_CHECKERS[svc], region, **kwargs): svc
             for svc in services
             if svc in SERVICE_CHECKERS
@@ -594,7 +621,7 @@ def run(
         "--fail-on-unhealthy",
         help="Exit with code 1 if any service is UNHEALTHY (useful in CI pipelines)",
     ),
-):
+) -> None:
     """
     Run concurrent health checks across AWS services.
 
@@ -641,7 +668,7 @@ def run(
 
 
 @app.command("list-services")
-def list_services():
+def list_services() -> None:
     """List all supported services for health checks."""
     console.print("\n[bold]Supported services:[/bold]")
     descriptions = {

@@ -17,6 +17,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, Literal, cast
 
 import boto3
 import typer
@@ -69,8 +70,8 @@ class CostReport:
 def fetch_costs(
     start_date: str,
     end_date: str,
-    granularity: str = "MONTHLY",
-) -> list[dict]:
+    granularity: Literal["DAILY", "HOURLY", "MONTHLY"] = "MONTHLY",
+) -> list[dict[str, Any]]:
     """Fetch per-service costs from AWS Cost Explorer."""
     ce = boto3.client("ce", region_name="us-east-1")  # CE is global, us-east-1 endpoint
     try:
@@ -80,7 +81,8 @@ def fetch_costs(
             Metrics=["UnblendedCost"],
             GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
         )
-        return response.get("ResultsByTime", [])
+        results = response.get("ResultsByTime", [])
+        return cast(list[dict[str, Any]], results)
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code == "DataUnavailableException":
@@ -92,14 +94,14 @@ def fetch_costs(
         raise
 
 
-def _date_range(days: int) -> tuple:
+def _date_range(days: int) -> tuple[str, str]:
     """Return (start_date, end_date) strings for Cost Explorer."""
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=days)
     return str(start), str(end)
 
 
-def _parse_results(results: list[dict]) -> dict[str, float]:
+def _parse_results(results: list[dict[str, Any]]) -> dict[str, float]:
     """Aggregate cost results into service -> total_usd mapping."""
     totals: dict[str, float] = {}
     for period in results:
@@ -235,12 +237,14 @@ def print_cost_table(report: CostReport) -> None:
             f"\n[bold yellow]⚠️  Cost anomalies detected ({len(report.anomalies)}):[/bold yellow]"
         )
         for a in report.anomalies:
-            direction = "increase" if a.change_pct > 0 else "decrease"
-            console.print(
-                f"  [yellow]{a.service}[/yellow]: "
-                f"{abs(a.change_pct):.1f}% {direction} "
-                f"(${a.prev_amount_usd:,.2f} → ${a.amount_usd:,.2f})"
-            )
+            # Type guard for mypy
+            if a.change_pct is not None and a.prev_amount_usd is not None:
+                direction = "increase" if a.change_pct > 0 else "decrease"
+                console.print(
+                    f"  [yellow]{a.service}[/yellow]: "
+                    f"{abs(a.change_pct):.1f}% {direction} "
+                    f"(${a.prev_amount_usd:,.2f} → ${a.amount_usd:,.2f})"
+                )
     console.print()
 
 
@@ -289,7 +293,7 @@ def run(
         "--anomaly-threshold",
         help="Percentage change to flag as a cost anomaly (default: 20.0)",
     ),
-):
+) -> None:
     """
     Generate a per-service AWS cost attribution report with period-over-period comparison.
 
